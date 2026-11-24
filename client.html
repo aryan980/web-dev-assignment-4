@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Socket Chat</title>
+  <!-- Served by the Socket.IO server itself, so it works offline -->
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root{
+      --bg:#0f1220; --panel:#171b2e; --panel2:#1e2340; --line:#2a3052;
+      --text:#e8ebff; --muted:#8b93c4; --accent:#6c7bff; --accent2:#8f5bff;
+      --mine:#4a5bff; --other:#262c4d; --ok:#38d39f; --danger:#ff6b81;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%}
+    body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+    button,input{font:inherit;color:inherit}
+    input{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;outline:none;width:100%}
+    input:focus{border-color:var(--accent)}
+    button{cursor:pointer;border:0;border-radius:10px;padding:10px 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));font-weight:600}
+    button.ghost{background:var(--panel2);border:1px solid var(--line);font-weight:500}
+    button:hover{filter:brightness(1.1)}
+
+    /* login */
+    #login{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(circle at 30% 20%,#232a5c,var(--bg) 60%);z-index:10}
+    #login .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:32px;width:min(380px,92vw);display:grid;gap:14px;text-align:center}
+    #login h1{font-size:26px} #login p{color:var(--muted);font-size:14px}
+
+    /* layout */
+    #app{display:grid;grid-template-columns:280px 1fr 220px;height:100vh}
+    aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+    aside.right{border-right:0;border-left:1px solid var(--line)}
+    .brand{padding:16px;font-weight:700;font-size:18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+    .status{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;font-weight:400}
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--danger)} .dot.on{background:var(--ok)}
+    .section{padding:12px 14px;border-bottom:1px solid var(--line);display:grid;gap:8px}
+    .section h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+    .row{display:flex;gap:8px}
+    #roomList{overflow:auto;flex:1;padding:8px}
+    .room{padding:10px 12px;border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}
+    .room:hover{background:var(--panel2)} .room.active{background:var(--panel2);outline:1px solid var(--accent)}
+    .room .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .badge{background:var(--danger);border-radius:99px;font-size:11px;padding:1px 7px;font-weight:700}
+    .room small{color:var(--muted)}
+
+    main{display:flex;flex-direction:column;min-width:0;min-height:0}
+    header.top{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--panel)}
+    header.top h2{font-size:17px} header.top small{color:var(--muted)}
+    .code{font-family:ui-monospace,Menlo,monospace;background:var(--panel2);border:1px dashed var(--accent);padding:4px 10px;border-radius:8px;letter-spacing:.15em}
+    #messages{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:6px}
+    .msg{max-width:min(560px,80%);padding:9px 13px;border-radius:14px;background:var(--other);word-wrap:break-word;overflow-wrap:anywhere}
+    .msg.me{align-self:flex-end;background:var(--mine);border-bottom-right-radius:4px}
+    .msg:not(.me){border-bottom-left-radius:4px}
+    .msg .who{font-size:12px;font-weight:700;color:#b9c0ff;margin-bottom:2px}
+    .msg .t{font-size:10.5px;opacity:.6;margin-left:8px;float:right;margin-top:6px}
+    .sys{align-self:center;font-size:12px;color:var(--muted);background:var(--panel);padding:3px 12px;border-radius:99px}
+    #typing{height:20px;padding:0 20px;font-size:12px;color:var(--muted);font-style:italic}
+    form#send{display:flex;gap:10px;padding:12px 18px 18px}
+    .members{padding:10px 14px;overflow:auto}
+    .member{padding:7px 0;display:flex;align-items:center;gap:8px;font-size:14px}
+    .avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px}
+    .empty{display:grid;place-items:center;flex:1;color:var(--muted)}
+    #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:10px 18px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;z-index:20}
+    #toast.show{opacity:1}
+    .menu{display:none}
+
+    @media(max-width:900px){
+      #app{grid-template-columns:1fr}
+      aside{position:fixed;inset:0 25% 0 0;z-index:5;transform:translateX(-100%);transition:.25s;border-right:1px solid var(--line)}
+      aside.right{display:none}
+      body.nav aside.left{transform:none}
+      .menu{display:inline-block;padding:6px 10px}
+    }
+  </style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login">
+  <form class="card" id="loginForm">
+    <h1>💬 Socket Chat</h1>
+    <p>Pick a name to start chatting. Create a personal room and share its code with friends.</p>
+    <input id="nameInput" maxlength="20" placeholder="Your name" autofocus required>
+    <button>Enter chat</button>
+  </form>
+</div>
+
+<div id="app">
+  <aside class="left">
+    <div class="brand">
+      <span>💬 Socket Chat</span>
+      <span class="status"><span class="dot" id="dot"></span><span id="statusTxt">offline</span></span>
+    </div>
+    <div class="section">
+      <h3>Create personal room</h3>
+      <form class="row" id="createForm">
+        <input id="roomName" maxlength="30" placeholder="Room name" required>
+        <button>Create</button>
+      </form>
+    </div>
+    <div class="section">
+      <h3>Join with code</h3>
+      <form class="row" id="joinForm">
+        <input id="roomCode" maxlength="10" placeholder="e.g. A1B2C3" style="text-transform:uppercase" required>
+        <button>Join</button>
+      </form>
+    </div>
+    <div class="section"><h3>Your rooms</h3></div>
+    <div id="roomList"></div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="ghost menu" id="menuBtn">☰</button>
+        <div><h2 id="roomTitle">Public Lobby</h2><small id="roomSub"></small></div>
+      </div>
+      <div class="row" style="align-items:center">
+        <span class="code" id="codeBox" title="Click to copy invite code" style="cursor:pointer"></span>
+        <button class="ghost" id="leaveBtn">Leave</button>
+      </div>
+    </header>
+    <div id="messages"></div>
+    <div id="typing"></div>
+    <form id="send" autocomplete="off">
+      <input id="msgInput" maxlength="1000" placeholder="Type a message…">
+      <button>Send</button>
+    </form>
+  </main>
+
+  <aside class="right">
+    <div class="brand" style="font-size:15px">Members <span id="count" class="status"></span></div>
+    <div class="members" id="members"></div>
+    <div class="section" style="margin-top:auto;border-top:1px solid var(--line);border-bottom:0">
+      <h3>You</h3>
+      <form class="row" id="nameForm">
+        <input id="myName" maxlength="20">
+        <button class="ghost">Save</button>
+      </form>
+    </div>
+  </aside>
+</div>
+<div id="toast"></div>
+
+<script>
+  // ---------- connection (same origin when served by the server, localhost when opened as a file) ----------
+  const socket = location.protocol.startsWith("http")
+    ? io({ transports: ["websocket"] })
+    : io("ws://localhost:8080/", { transports: ["websocket"] });
+
+  const LOBBY = "LOBBY";
+  const $ = (id) => document.getElementById(id);
+  const state = { name: "", rooms: new Map(), active: LOBBY, typing: {} };
+  // rooms: code -> { code, name, owner, msgs:[], members:[], unread }
+
+  // original backend events (kept) -> shown in console + toast
+  socket.on("gyankibaat", (m) => console.log("Message from server", m));
+  socket.on("join", (m) => { console.log("Message from server", m); });
+  socket.on("announcement", (m) => { console.log("Message from server", m); toast(m); });
+
+  // ---------- helpers ----------
+  function toast(t){ const el=$("toast"); el.textContent=t; el.classList.add("show"); clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove("show"),2500); }
+  const time = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const color = (s) => { let h=0; for (const c of s) h=(h*31+c.charCodeAt(0))%360; return `hsl(${h} 65% 55%)`; };
+  const emit = (ev, data) => new Promise((res) => socket.emit(ev, data, res));
+
+  // ---------- connection status ----------
+  socket.on("connect", () => {
+    $("dot").classList.add("on"); $("statusTxt").textContent = "online";
+    if (state.name) enter(true); // re-register after reconnect
+  });
+  socket.on("disconnect", () => { $("dot").classList.remove("on"); $("statusTxt").textContent = "reconnecting…"; });
+
+  // ---------- login ----------
+  $("loginForm").onsubmit = async (e) => {
+    e.preventDefault();
+    state.name = $("nameInput").value.trim();
+    if (state.name) enter(false);
+  };
+  async function enter(reconnect) {
+    const r = await emit("setUsername", state.name);
+    if (!r.ok) return toast(r.error);
+    $("myName").value = state.name;
+    $("login").style.display = "none";
+    if (reconnect) { // server forgot our rooms after reconnect: rejoin what we had
+      const old = [...state.rooms.keys()];
+      state.rooms.clear();
+      for (const code of old) await joinByCode(code, true);
+      if (!state.rooms.has(LOBBY)) await joinByCode(LOBBY, true);
+    } else {
+      addRoom({ code: LOBBY, name: "Public Lobby" }, []); // server auto-joined the lobby
+      switchRoom(LOBBY);
+    }
+  }
+  $("nameForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await emit("setUsername", $("myName").value);
+    if (r.ok) { state.name = r.username; toast("Name updated"); } else toast(r.error);
+  };
+
+  // ---------- rooms ----------
+  function addRoom(info, history) {
+    const r = state.rooms.get(info.code) || { msgs: [], members: [], unread: 0 };
+    Object.assign(r, { code: info.code, name: info.name, owner: info.owner });
+    r.msgs = history.map((m) => ({ type: "chat", ...m }));
+    state.rooms.set(info.code, r);
+  }
+  async function joinByCode(code, silent) {
+    const r = await emit("joinRoom", { code });
+    if (!r.ok) { if (!silent) toast(r.error); return false; }
+    addRoom(r.room, r.history);
+    switchRoom(r.room.code);
+    return true;
+  }
+  $("createForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await emit("createRoom", { name: $("roomName").value });
+    if (!r.ok) return toast(r.error);
+    addRoom(r.room, r.history); switchRoom(r.room.code);
+    $("roomName").value = ""; toast("Room created, share the code!");
+  };
+  $("joinForm").onsubmit = async (e) => {
+    e.preventDefault();
+    if (await joinByCode($("roomCode").value.trim().toUpperCase())) $("roomCode").value = "";
+  };
+  $("leaveBtn").onclick = async () => {
+    if (state.active === LOBBY) return toast("You can't leave the lobby");
+    const code = state.active;
+    await emit("leaveRoom", code);
+    state.rooms.delete(code);
+    switchRoom(LOBBY);
+  };
+  $("codeBox").onclick = () => {
+    if (state.active === LOBBY) return;
+    navigator.clipboard?.writeText(state.active).then(() => toast("Invite code copied"));
+  };
+  $("menuBtn").onclick = () => document.body.classList.toggle("nav");
+
+  function switchRoom(code) {
+    state.active = code;
+    const r = state.rooms.get(code); if (!r) return;
+    r.unread = 0;
+    document.body.classList.remove("nav");
+    $("roomTitle").textContent = r.name;
+    $("roomSub").textContent = code === LOBBY ? "Everyone is here" : "Personal room";
+    $("codeBox").style.display = code === LOBBY ? "none" : "";
+    $("codeBox").textContent = code;
+    $("leaveBtn").style.display = code === LOBBY ? "none" : "";
+    renderRooms(); renderMessages(); renderMembers(); renderTyping();
+    $("msgInput").focus();
+  }
+
+  function renderRooms() {
+    const box = $("roomList"); box.innerHTML = "";
+    state.rooms.forEach((r) => {
+      const d = document.createElement("div");
+      d.className = "room" + (r.code === state.active ? " active" : "");
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = (r.code === LOBBY ? "🌐 " : "🔒 ") + r.name;
+      d.append(nm);
+      if (r.unread) { const b = document.createElement("span"); b.className = "badge"; b.textContent = r.unread; d.append(b); }
+      else if (r.code !== LOBBY) { const s = document.createElement("small"); s.textContent = r.code; d.append(s); }
+      d.onclick = () => switchRoom(r.code);
+      box.append(d);
+    });
+  }
+
+  // ---------- messages (textContent only -> no XSS) ----------
+  function bubble(m) {
+    const d = document.createElement("div");
+    if (m.type === "sys") { d.className = "sys"; d.textContent = m.text; return d; }
+    const mine = m.from === socket.id;
+    d.className = "msg" + (mine ? " me" : "");
+    if (!mine) { const w = document.createElement("div"); w.className = "who"; w.style.color = color(m.user); w.textContent = m.user; d.append(w); }
+    const t = document.createElement("span"); t.textContent = m.text;
+    const ts = document.createElement("span"); ts.className = "t"; ts.textContent = time(m.ts);
+    d.append(t, ts);
+    return d;
+  }
+  function renderMessages() {
+    const box = $("messages"); box.innerHTML = "";
+    const r = state.rooms.get(state.active);
+    r.msgs.forEach((m) => box.append(bubble(m)));
+    box.scrollTop = box.scrollHeight;
+  }
+  function pushMsg(code, m) {
+    const r = state.rooms.get(code); if (!r) return;
+    r.msgs.push(m);
+    if (code === state.active) {
+      const box = $("messages");
+      const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80 || m.from === socket.id;
+      box.append(bubble(m)); if (stick) box.scrollTop = box.scrollHeight;
+    } else if (m.type === "chat") { r.unread++; renderRooms(); }
+  }
+  socket.on("chatMessage", (m) => {
+    pushMsg(m.room, { type: "chat", ...m });
+    const t = state.typing[m.room]; if (t) { delete t[m.user]; renderTyping(); }
+  });
+  socket.on("system", (m) => pushMsg(m.room, { type: "sys", ...m }));
+
+  // ---------- members ----------
+  socket.on("members", ({ room, members }) => {
+    const r = state.rooms.get(room); if (!r) return;
+    r.members = members;
+    if (room === state.active) renderMembers();
+  });
+  function renderMembers() {
+    const r = state.rooms.get(state.active), box = $("members"); box.innerHTML = "";
+    $("count").textContent = r.members.length ? `(${r.members.length})` : "";
+    r.members.forEach((m) => {
+      const d = document.createElement("div"); d.className = "member";
+      const a = document.createElement("span"); a.className = "avatar"; a.style.background = color(m.name); a.textContent = m.name[0].toUpperCase();
+      const n = document.createElement("span"); n.textContent = m.name + (m.id === socket.id ? " (you)" : "");
+      d.append(a, n); box.append(d);
+    });
+  }
+
+  // ---------- sending + typing indicator ----------
+  let typingTimer = null;
+  $("send").onsubmit = async (e) => {
+    e.preventDefault();
+    const text = $("msgInput").value.trim(); if (!text) return;
+    $("msgInput").value = "";
+    clearTimeout(typingTimer); socket.emit("typing", { room: state.active, typing: false });
+    await emit("chatMessage", { room: state.active, text });
+  };
+  $("msgInput").oninput = () => {
+    socket.emit("typing", { room: state.active, typing: true });
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => socket.emit("typing", { room: state.active, typing: false }), 1500);
+  };
+  socket.on("typing", ({ room, user, typing }) => {
+    const t = (state.typing[room] ||= {});
+    if (typing) { t[user] = true; clearTimeout(t["_" + user]); t["_" + user] = setTimeout(() => { delete t[user]; renderTyping(); }, 3000); }
+    else delete t[user];
+    if (room === state.active) renderTyping();
+  });
+  function renderTyping() {
+    const names = Object.keys(state.typing[state.active] || {}).filter((k) => !k.startsWith("_"));
+    $("typing").textContent = names.length ? `${names.join(", ")} ${names.length > 1 ? "are" : "is"} typing…` : "";
+  }
+</script>
+</body>
+</html>
